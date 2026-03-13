@@ -21,6 +21,47 @@ const NEWS_API_KEY = process.env.NEWS_API_KEY || '';
 
 // ── 关键词打分规则 ──
 // 每条规则：{ pattern: 正则, effects: { country: { dim: delta } }, label, icon }
+// ── 中文摘要模板（根据匹配规则自动生成）──
+const ZH_TEMPLATES = [
+  { pattern: /strike|airstrike|bomb|destroy/i,         zh: (t) => `空袭行动：${extractTarget(t)}遭到打击` },
+  { pattern: /missile.*Iran|Iran.*missile|ballistic/i, zh: (t) => `伊朗发射弹道导弹，防空系统拦截` },
+  { pattern: /missile|rocket/i,                        zh: (t) => `导弹袭击事件报告` },
+  { pattern: /ceasefire|cease-fire|truce/i,            zh: (t) => `停火谈判出现新进展` },
+  { pattern: /negotiate|diplomacy|mediat/i,            zh: (t) => `外交斡旋渠道出现活动` },
+  { pattern: /peace talks/i,                           zh: (t) => `各方和谈迹象浮现` },
+  { pattern: /Hormuz/i,                                zh: (t) => `霍尔木兹海峡局势更新` },
+  { pattern: /oil price|crude/i,                       zh: (t) => `原油价格受战事影响波动` },
+  { pattern: /tanker|shipping/i,                       zh: (t) => `航运安全受到威胁` },
+  { pattern: /nuclear|uranium|enrichment/i,            zh: (t) => `核问题相关动态更新` },
+  { pattern: /IAEA/i,                                  zh: (t) => `国际原子能机构发布声明` },
+  { pattern: /Congress|Senate|AUMF/i,                  zh: (t) => `美国国会对战争授权展开辩论` },
+  { pattern: /protest|opposition/i,                    zh: (t) => `国内反对声音持续上升` },
+  { pattern: /Hezbollah|Lebanon/i,                     zh: (t) => `黎巴嫩真主党介入态势` },
+  { pattern: /IDF|Israel.*attack|Israel.*strike/i,     zh: (t) => `以色列国防军发动新一轮打击` },
+  { pattern: /Iron Dome|intercept/i,                   zh: (t) => `以色列拦截系统成功拦截来袭目标` },
+  { pattern: /civilian|casualt|humanitarian/i,         zh: (t) => `平民伤亡与人道主义危机加剧` },
+  { pattern: /UN Security Council|United Nations/i,    zh: (t) => `联合国安理会紧急磋商` },
+  { pattern: /Iran.*protest|unrest/i,                  zh: (t) => `伊朗国内出现动荡迹象` },
+  { pattern: /US forces|Pentagon|US military/i,        zh: (t) => `美军部队采取新行动` },
+  { pattern: /Oman|Qatar.*mediat/i,                    zh: (t) => `海湾国家介入调停斡旋` },
+  { pattern: /sanction/i,                              zh: (t) => `新一轮制裁措施出台` },
+  { pattern: /oil|energy/i,                            zh: (t) => `能源市场受冲突影响` },
+];
+
+function extractTarget(text) {
+  if (/Iran/i.test(text)) return '伊朗目标';
+  if (/Israel/i.test(text)) return '以色列目标';
+  if (/Syria/i.test(text)) return '叙利亚目标';
+  return '军事目标';
+}
+
+function generateZhSummary(title) {
+  for (const t of ZH_TEMPLATES) {
+    if (t.pattern.test(title)) return t.zh(title);
+  }
+  return null;
+}
+
 const SCORING_RULES = [
   // 军事打击 → 伊朗T↓R↓
   {
@@ -139,9 +180,12 @@ function scoreHeadline(title, description) {
   // collect unique labels (max 3)
   const labels = [...new Set(matchedRules.flatMap(r => r.labels))].slice(0, 3);
   const icon = matchedRules[0].icon;
+  const zhText = generateZhSummary(title);
 
   return {
     text: title,
+    zhText: zhText,
+    displayText: zhText ? zhText : title,
     icon,
     effects: combinedEffects,
     labels,
