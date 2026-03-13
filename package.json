@@ -1,0 +1,12 @@
+{
+  "name": "s2-battle-news-server",
+  "version": "1.0.0",
+  "description": "S₂ Battle News Server — 代理 NewsAPI，实时推送战局事件评分",
+  "main": "s2_server.js",
+  "scripts": {
+    "start": "node s2_server.js"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
