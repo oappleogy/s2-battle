@@ -271,6 +271,81 @@ async function refreshNews() {
   console.log(`[S2] Got ${newsCache.length} scored events`);
 }
 
+
+// ── 服务端贝叶斯概率计算 ──
+const WEIGHTS = { T:0.25, R:0.25, C:0.18, F:0.15, I:0.10, N:0.07 };
+const INIT_DIMS = {
+  us: { T: 0.8, R: -0.1, C: 0.4, F: -0.2, I: -0.1, N: 0.3 },
+  il: { T: 0.7, R:  0.0, C: 0.7, F:  0.3, I:  0.4, N: 0.6 },
+  ir: { T:-0.4, R: -0.8, C:-0.3, F: -0.8, I: -0.7, N:-0.6 }
+};
+
+function computeCurrentPaths(events) {
+  // Deep copy dims
+  const dims = {
+    us: { ...INIT_DIMS.us },
+    il: { ...INIT_DIMS.il },
+    ir: { ...INIT_DIMS.ir }
+  };
+
+  // Apply all events once (sorted oldest first)
+  const sorted = [...events].sort((a,b) => new Date(a.publishedAt) - new Date(b.publishedAt));
+  for (const ev of sorted) {
+    if (!ev.effects) continue;
+    for (const [country, dimDeltas] of Object.entries(ev.effects)) {
+      if (!dims[country]) continue;
+      for (const [dim, delta] of Object.entries(dimDeltas)) {
+        if (dims[country][dim] !== undefined) {
+          dims[country][dim] = Math.max(-1, Math.min(1, dims[country][dim] + delta * 0.4));
+        }
+      }
+    }
+  }
+
+  // Calc scores
+  const scores = {};
+  for (const c of ['us','il','ir']) {
+    scores[c] = Object.keys(WEIGHTS).reduce((s,d) => s + WEIGHTS[d] * dims[c][d], 0);
+  }
+
+  // Bayesian path update from prior
+  const prior = { a: 13, b: 48, c: 11, d: 27 };
+  let { a, b, c, d } = prior;
+
+  const irScore = scores.ir;
+  const usScore = scores.us;
+  const irT = dims.ir.T;
+  const irR = dims.ir.R;
+  const irI = dims.ir.I;
+  const usF = dims.us.F;
+  const usI = dims.us.I;
+
+  if (usI < -0.1) a *= 1 + Math.abs(usI) * 0.5;
+  if (usF < -0.2) a *= 1 + (Math.abs(usF) - 0.2) * 0.4;
+  if (irScore < -0.6) a *= 1 + (Math.abs(irScore) - 0.6) * 0.6;
+
+  if (irT > -0.6) b *= 1.05;
+  if (irT < -0.7) b *= 0.85;
+  if (usF < -0.25) b *= 1 - (Math.abs(usF) - 0.25) * 0.3;
+
+  if (irI < -0.75) c *= 1 + (Math.abs(irI) - 0.75) * 1.8;
+  if (irScore < -0.7) c *= 1 + (Math.abs(irScore) - 0.7) * 0.8;
+
+  if (irT < -0.65 && irR < -0.75) d *= 1 + (Math.abs(irT) - 0.65) * 1.2;
+  if (usF < -0.35) d *= 1 + (Math.abs(usF) - 0.35) * 0.6;
+  if (irScore < -0.6 && usI < -0.1) { a *= 0.85; d *= 0.85; }
+
+  const maxDev = 8;
+  const t = a + b + c + d;
+  return {
+    a: Math.round(Math.max(prior.a - maxDev, Math.min(prior.a + maxDev, (a/t)*100))),
+    b: Math.round(Math.max(prior.b - maxDev, Math.min(prior.b + maxDev, (b/t)*100))),
+    c: Math.round(Math.max(prior.c - maxDev, Math.min(prior.c + maxDev, (c/t)*100))),
+    d: Math.round(Math.max(prior.d - maxDev, Math.min(prior.d + maxDev, (d/t)*100))),
+    dims, scores
+  };
+}
+
 // ── HTTP SERVER ──
 const server = http.createServer(async (req, res) => {
   // CORS headers
@@ -286,10 +361,12 @@ const server = http.createServer(async (req, res) => {
     try {
       await refreshNews();
       res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+      const currentPaths = computeCurrentPaths(newsCache);
       res.end(JSON.stringify({
         ok: true,
         count: newsCache.length,
         lastFetch: new Date(lastFetch).toISOString(),
+        currentPaths,
         events: newsCache
       }));
     } catch (e) {
