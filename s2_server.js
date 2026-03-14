@@ -288,15 +288,42 @@ function computeCurrentPaths(events) {
     ir: { ...INIT_DIMS.ir }
   };
 
-  // Apply all events once (sorted oldest first)
-  const sorted = [...events].sort((a,b) => new Date(a.publishedAt) - new Date(b.publishedAt));
+  // 去重：双重去重
+  // 1. 标题去重（完全相同）
+  // 2. 效果指纹去重（不同标题但命中相同规则 = 实质相同新闻）
+  const seenTitles = new Set();
+  const seenFingerprints = new Set();
+  const unique = events.filter(ev => {
+    // 标题去重
+    const titleKey = (ev.text || '').slice(0, 60);
+    if (seenTitles.has(titleKey)) return false;
+    seenTitles.add(titleKey);
+
+    // 效果指纹去重：把 effects 序列化为字符串
+    // 相同的效果组合 = 实质相同的新闻，同一天只算一次
+    if (ev.effects) {
+      const day = (ev.publishedAt || '').slice(0, 10); // 同一天内去重
+      const effectStr = JSON.stringify(ev.effects, Object.keys(ev.effects).sort());
+      const fingerprint = day + '|' + effectStr;
+      if (seenFingerprints.has(fingerprint)) return false;
+      seenFingerprints.add(fingerprint);
+    }
+    return true;
+  });
+
+  // Apply all unique events once (sorted oldest first)
+  const sorted = [...unique].sort((a,b) => new Date(a.publishedAt) - new Date(b.publishedAt));
+  const eventCount = sorted.length || 1;
+
   for (const ev of sorted) {
     if (!ev.effects) continue;
+    // 衰减系数：新闻越多每条权重越小，防止堆积
+    const decay = Math.max(0.15, 0.5 / Math.sqrt(eventCount));
     for (const [country, dimDeltas] of Object.entries(ev.effects)) {
       if (!dims[country]) continue;
       for (const [dim, delta] of Object.entries(dimDeltas)) {
         if (dims[country][dim] !== undefined) {
-          dims[country][dim] = Math.max(-1, Math.min(1, dims[country][dim] + delta * 0.4));
+          dims[country][dim] = Math.max(-1, Math.min(1, dims[country][dim] + delta * decay));
         }
       }
     }
